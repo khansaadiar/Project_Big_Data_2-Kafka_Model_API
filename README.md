@@ -69,12 +69,14 @@ Menampilkan halaman utama dengan kategori produk.
 
 ### 2. Get Products by Category
 ![alt text](images/category1.png)
+
 ![alt text](images/category2.png)
 - **Parameter**: Kategori produk yang ingin dicari.
 - **Respon**: Daftar produk dalam kategori yang diminta.
 
 ### 3. Get Similar Products
 ![alt text](<images/similar 1.png>)
+
 ![alt text](images/similar2.png)
 - **Parameter**: Nama produk yang ingin dicari produk serupa.
 - **Respon**: Daftar produk serupa.
