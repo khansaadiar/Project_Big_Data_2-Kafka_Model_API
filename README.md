@@ -51,7 +51,15 @@ Part ini untuk membaca data dari Kafka, menyimpannya dalam batch, dan menyimpan 
 ![alt text](images/ocnsumer.png)
 
 ### 7. Melatih Model dengan Spark
-Proses ini untuk melatih model KMeans berdasarkan batch data yang disimpan. <br>
+Proses ini untuk melatih model KMeans berdasarkan batch data yang disimpan.
+<br> 
+
+Terdapat 3 model dengan skema sebagai berikut:
+- Model 1: 1/3 data pertama
+- Model 2: 1/3 data pertama + 1/3 data kedua
+- Model 3: 1/3 data pertama + 1/3 data kedua + 1/3 data terakhir (semua data) 
+<br>
+
 ``python train_models.py``
 
 ![alt text](images/train.png)
