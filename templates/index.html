@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Product Search</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .category-buttons, .search-inputs, .result-section {
+            margin-bottom: 20px;
+        }
+        button {
+            margin: 5px;
+            padding: 10px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        input[type="text"], input[type="number"] {
+            padding: 10px;
+            font-size: 16px;
+            width: 80%;
+            margin-right: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .result-section {
+            border: 1px solid #ccc;
+            padding: 20px;
+            border-radius: 4px;
+        }
+        .loading {
+            display: none;
+            color: #666;
+            font-style: italic;
+        }
+        .error {
+            color: #ff0000;
+            margin: 10px 0;
+        }
+        .product-card {
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+        }
+        /* Responsive styles */
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+            input[type="text"], input[type="number"] {
+                width: 100%;
+                margin-bottom: 10px;
+            }
+            .category-buttons button {
+                width: 100%;
+                margin: 5px 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>Product Information</h1>
+
+    <!-- Category Section -->
+    <div id="mainCategoryButtons" class="category-buttons">
+        <h2>Select a Main Category:</h2>
+    </div>
+
+    <div id="subCategoryButtons" class="category-buttons"></div>
+
+    <!-- Similar Product Section -->
+    <div class="search-inputs">
+        <h2>Find Similar Products:</h2>
+        <input type="text" id="similarProductName" placeholder="Enter product name" />
+        <button onclick="fetchSimilarProducts()">Search</button>
+    </div>
+
+    <!-- Product by Price Range Section -->
+    <div class="search-inputs">
+        <h2>Find Products by Price Range:</h2>
+        <input type="number" id="priceRange" placeholder="Enter target price" />
+        <button onclick="fetchProductsByPrice()">Search</button>
+    </div>
+
+    <!-- Loading indicator -->
+    <div id="loading" class="loading">Loading...</div>
+
+    <!-- Result Section -->
+    <div class="result-section" id="result">
+        <h3>Results:</h3>
+        <div id="errorMessage" class="error"></div>
+        <div id="resultContent">No results yet.</div>
+    </div>
+
+    <script>
+        const BASE_URL = 'http://localhost:5001/api';
+
+        // Load main categories on page load
+        window.onload = async function() {
+            try {
+                showLoading();
+                const response = await fetch(`${BASE_URL}/categories`);
+                const categories = await response.json();
+                displayMainCategories(Object.keys(categories));
+            } catch (error) {
+                console.error('Error:', error);
+                showError(`Error fetching categories: ${error.message}`);
+            } finally {
+                hideLoading();
+            }
+        };
+
+        function displayMainCategories(categories) {
+            const mainCategoryButtonsDiv = document.getElementById('mainCategoryButtons');
+            mainCategoryButtonsDiv.innerHTML = '<h2>Select a Main Category:</h2>';
+            categories.forEach(cat => {
+                const button = document.createElement('button');
+                button.innerText = cat;
+                button.onclick = () => fetchSubCategories(cat);
+                mainCategoryButtonsDiv.appendChild(button);
+            });
+        }
+
+        function showLoading() {
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('errorMessage').innerHTML = '';
+        }
+
+        function hideLoading() {
+            document.getElementById('loading').style.display = 'none';
+        }
+
+        function showError(message) {
+            document.getElementById('errorMessage').innerHTML = message;
+            document.getElementById('resultContent').innerHTML = '';
+        }
+
+        async function fetchSubCategories(mainCategory) {
+            try {
+                showLoading();
+                const response = await fetch(`${BASE_URL}/categories`);
+                const categories = await response.json();
+                displaySubCategories(categories[mainCategory], mainCategory);
+            } catch (error) {
+                console.error('Error:', error);
+                showError(`Error fetching subcategories: ${error.message}`);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        function displaySubCategories(subCategories, mainCategory) {
+            const subCategoryButtonsDiv = document.getElementById('subCategoryButtons');
+            subCategoryButtonsDiv.innerHTML = '<h2>Select a Subcategory:</h2>';
+            subCategories.forEach(subCat => {
+                const button = document.createElement('button');
+                button.innerText = subCat;
+                button.onclick = () => fetchCategoryProducts(`${mainCategory}|${subCat}`);
+                subCategoryButtonsDiv.appendChild(button);
+            });
+        }
+
+        async function fetchCategoryProducts(category) {
+            try {
+                showLoading();
+                const response = await fetch(`${BASE_URL}/products?category=${encodeURIComponent(category)}`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                displayResults(data);
+            } catch (error) {
+                console.error('Error:', error);
+                showError(`Error fetching category products: ${error.message}`);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        async function fetchSimilarProducts() {
+            const similarProductName = document.getElementById('similarProductName').value;
+            if (!similarProductName) {
+                showError('Please enter a product name');
+                return;
+            }
+
+            try {
+                showLoading();
+                const response = await fetch(`${BASE_URL}/similar_products?name=${encodeURIComponent(similarProductName)}`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                displayResults(data);
+            } catch (error) {
+                console.error('Error:', error);
+                showError(`Error fetching similar products: ${error.message}`);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        async function fetchProductsByPrice() {
+            const priceRange = document.getElementById('priceRange').value;
+            if (!priceRange) {
+                showError('Please enter a price');
+                return;
+            }
+
+            try {
+                showLoading();
+                const response = await fetch(`${BASE_URL}/products_by_price?target_price=${priceRange}`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                displayResults(data);
+            } catch (error) {
+                console.error('Error:', error);
+                showError(`Error fetching products by price: ${error.message}`);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        function displayResults(data) {
+            const resultContent = document.getElementById('resultContent');
+            resultContent.innerHTML = '';
+            
+            if (!data || data.length === 0) {
+                resultContent.innerHTML = 'No results found.';
+                return;
+            }
+
+            data.forEach(item => {
+                const productCard = document.createElement('div');
+                productCard.className = 'product-card';
+                productCard.innerHTML = `
+                    <p><strong>Name:</strong> ${item.name || 'N/A'}</p>
+                    <p><strong>Price:</strong> $${item.price?.toFixed(2) || 'N/A'}</p>
+                    <p><strong>Rating:</strong> ${item.rating || 'N/A'}</p>
+                    <p><strong>Description:</strong> ${item.description || 'No description available'}</p>
+                `;
+                resultContent.appendChild(productCard);
+            });
+        }
+    </script>
+</body>
+</html>
