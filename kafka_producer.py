@@ -1,24 +1,43 @@
-# producer.py
 from confluent_kafka import Producer
 import pandas as pd
 import time
 import json
+from datetime import datetime
+import logging
 from config import KAFKA_CONFIG, KAFKA_TOPIC, CSV_PATH
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('producer.log'),
+        logging.StreamHandler()
+    ]
+)
 
 def delivery_report(err, msg):
     if err is not None:
-        print(f'Message delivery failed: {err}')
+        logging.error(f'Message delivery failed: {err}')
     else:
-        print(f'Message delivered to {msg.topic()} [{msg.partition()}]')
+        logging.info(f'Message delivered to {msg.topic()} [{msg.partition()}] at offset {msg.offset()}')
 
 def create_producer():
-    return Producer(KAFKA_CONFIG)
+    logging.info("Creating Kafka producer...")
+    producer_config = KAFKA_CONFIG.copy()
+    producer_config.update({
+        'linger.ms': 1,              # Minimal delay
+        'batch.size': 1,             # Minimal valid batch size
+        'compression.type': 'none',   # No compression for speed
+        'queue.buffering.max.ms': 1,  # Minimal buffering
+        'acks': 1                     # Wait for leader acknowledgment
+    })
+    return Producer(producer_config)
 
 def clean_price(price):
     if pd.isna(price):
         return 0.0
     if isinstance(price, str):
-        # Remove '₹' symbol and commas, then convert to float
         cleaned = price.replace('₹', '').replace(',', '').strip()
         try:
             return float(cleaned)
@@ -30,7 +49,6 @@ def clean_percentage(percentage):
     if pd.isna(percentage):
         return 0.0
     if isinstance(percentage, str):
-        # Remove '%' symbol and convert to float
         cleaned = percentage.replace('%', '').strip()
         try:
             return float(cleaned)
@@ -42,7 +60,6 @@ def clean_number(number):
     if pd.isna(number):
         return 0
     if isinstance(number, str):
-        # Remove any commas and convert to int
         cleaned = number.replace(',', '').strip()
         try:
             return int(cleaned)
@@ -64,11 +81,18 @@ def safe_float_convert(value, default=0.0):
 
 def stream_data():
     producer = create_producer()
+    start_time = datetime.now()
+    
+    logging.info(f"Starting data streaming at {start_time}")
     
     # Read Amazon Sales dataset
+    logging.info(f"Reading data from {CSV_PATH}")
     df = pd.read_csv(CSV_PATH)
+    total_records = len(df)
+    logging.info(f"Total records to process: {total_records}")
     
     # Clean and convert data
+    logging.info("Cleaning and converting data...")
     df['discounted_price'] = df['discounted_price'].apply(clean_price)
     df['actual_price'] = df['actual_price'].apply(clean_price)
     df['discount_percentage'] = df['discount_percentage'].apply(clean_percentage)
@@ -93,26 +117,38 @@ def stream_data():
                 'review_title': str(row['review_title']),
                 'review_content': str(row['review_content']),
                 'img_link': str(row['img_link']),
-                'product_link': str(row['product_link'])
+                'product_link': str(row['product_link']),
+                'timestamp': datetime.now().isoformat()
             }
             
+            # Produce message
             producer.produce(
                 KAFKA_TOPIC,
                 key=str(row['product_id']),
                 value=json.dumps(data),
                 callback=delivery_report
             )
+            
+            # Poll and flush to ensure message is sent
             producer.poll(0)
-            print(f"Sent record {index + 1}")
-            time.sleep(0.1)
+            producer.flush()  # Make sure the message is sent before continuing
+            
+            if (index + 1) % 10 == 0:  # Log every 10 records
+                logging.info(f"Progress: {index + 1}/{total_records} records processed ({((index + 1)/total_records)*100:.2f}%)")
+            
+            # Add delay to simulate real-time streaming
+            time.sleep(0.5)  # 500ms delay between messages
             
     except Exception as e:
-        print(f"Error sending data: {e}")
-        print(f"Error at row: {index}")
-        print(f"Row data: {row}")
+        logging.error(f"Error sending data: {e}")
+        logging.error(f"Error at row: {index}")
+        logging.error(f"Row data: {row}")
     finally:
         producer.flush()
+        end_time = datetime.now()
+        duration = end_time - start_time
+        logging.info(f"Streaming completed at {end_time}")
+        logging.info(f"Total duration: {duration}")
 
 if __name__ == "__main__":
     stream_data()
-    
