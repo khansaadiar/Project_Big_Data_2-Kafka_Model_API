@@ -3,3 +3,6 @@ pandas
 scikit-learn
 flask
 numpy
+flask-cors
+pyspark
+setuptools

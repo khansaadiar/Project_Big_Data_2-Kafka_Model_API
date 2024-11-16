@@ -5,6 +5,8 @@ import os
 import math
 from datetime import datetime
 import logging
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import from_json, col
 from config import KAFKA_CONFIG, KAFKA_TOPIC
 
 # Set up logging
@@ -16,6 +18,14 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
+
+def create_spark_session():
+    os.environ['JAVA_HOME'] = '/Library/Java/JavaVirtualMachines/adoptopenjdk-11.jdk/Contents/Home'
+    
+    return SparkSession.builder \
+        .appName("SensorTemperatureMonitoring") \
+        .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.0") \
+        .getOrCreate()
 
 def create_consumer():
     config = KAFKA_CONFIG.copy()
@@ -63,7 +73,8 @@ def save_batches_by_thirds(accumulated_data):
     save_batch(accumulated_data, 'model_3')
     logging.info(f"Saved model_3 with {len(accumulated_data)} records")
 
-def process_messages():
+def process_messages_with_spark():
+    spark = create_spark_session()
     consumer = create_consumer()
     consumer.subscribe([KAFKA_TOPIC])
     logging.info(f"Subscribed to topic: {KAFKA_TOPIC}")
@@ -130,4 +141,4 @@ def process_messages():
         consumer.close()
 
 if __name__ == "__main__":
-    process_messages()
+    process_messages_with_spark()
