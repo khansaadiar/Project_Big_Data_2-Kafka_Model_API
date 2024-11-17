@@ -1,265 +1,150 @@
-from flask import Flask, request, jsonify, render_template
-from flask_cors import CORS
-from pyspark.sql import SparkSession
-from pyspark.sql import functions as F
-import logging
+from flask import Flask, jsonify, request
 import os
+import json
+from pyspark.ml.feature import VectorAssembler, StandardScaler
+from pyspark.ml.clustering import KMeans
+from pyspark.sql import SparkSession
+from pyspark.sql.types import StructType, StructField, DoubleType
 
-# Set Java home environment variable
+# Set JAVA_HOME sesuai path yang Anda tentukan
 os.environ['JAVA_HOME'] = '/Library/Java/JavaVirtualMachines/adoptopenjdk-11.jdk/Contents/Home'
 
+# Inisialisasi Spark session
+spark = SparkSession.builder \
+    .appName("Big Data API") \
+    .getOrCreate()
+
+# Define constants
+DATASET_PATHS = {
+    'small': 'data/model_1.csv',
+    'medium': 'data/model_2.csv',
+    'full': 'data/model_3.csv'
+}
+K = 3  # Number of clusters
+
+# Flask app
 app = Flask(__name__)
-CORS(app)
-
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Global variables for DataFrames
-df_model1 = None
-df_model2 = None
-df_model3 = None
-spark = None
-
-def initialize_spark():
-    """Initialize Spark session"""
-    global spark
-    spark = SparkSession.builder \
-        .appName("ProductRecommendation") \
-        .config("spark.driver.extraJavaOptions", "-Djavax.security.auth.useSubjectCredsOnly=false") \
-        .config("spark.executor.extraJavaOptions", "-Djavax.security.auth.useSubjectCredsOnly=false") \
-        .config("spark.driver.memory", "4g") \
-        .config("spark.executor.memory", "4g") \
-        .getOrCreate()
-    return spark
-
-def clean_category_name(category):
-    """Clean category name for display"""
-    # Split by last occurrence of '|' and take the last part
-    return category.split('|')[-1].strip()
-
-def load_dataframes():
-    """Load all dataframes on startup"""
-    global df_model1, df_model2, df_model3, spark
-    
-    if spark is None:
-        spark = initialize_spark()
-    
-    data_dir = 'data'
-    try:
-        df_model1 = spark.read.csv(os.path.join(data_dir, 'clustered_model_1.csv'), header=True, inferSchema=True)
-        df_model2 = spark.read.csv(os.path.join(data_dir, 'clustered_model_2.csv'), header=True, inferSchema=True)
-        df_model3 = spark.read.csv(os.path.join(data_dir, 'clustered_model_3.csv'), header=True, inferSchema=True)
-        
-        # Clean category names on load
-        df_model1 = df_model1.withColumn('category', F.trim(F.col('category')))
-        df_model2 = df_model2.withColumn('category', F.trim(F.col('category')))
-        df_model3 = df_model3.withColumn('category', F.trim(F.col('category')))
-        
-        logger.info("All datasets loaded successfully")
-        
-        # Log available categories for debugging
-        categories = [row.category for row in df_model1.select('category').distinct().collect()]
-        logger.info(f"Available categories: {categories}")
-        
-        return True
-    except Exception as e:
-        logger.error(f"Error loading datasets: {e}")
-        return False
 
 @app.route('/')
 def home():
-    """Render the main page with dynamic categories"""
-    if df_model1 is not None:
-        # Get main categories (first level)
-        categories = [row.category for row in df_model1.select('category').distinct().collect()]
-        # Clean and organize categories
-        main_categories = sorted(list(set([cat.split('|')[0].strip() for cat in categories])))
-        return render_template('index.html', categories=main_categories)
-    return render_template('index.html', categories=[])
+    """
+    Simple home endpoint to verify the API is running.
+    """
+    return jsonify({"message": "Big Data API is running."})
 
-@app.route('/api/products', methods=['GET'])
-def get_products_by_category():
-    main_category = request.args.get('category', '').strip()
-    
-    if not main_category:
-        return jsonify({'error': 'Category parameter is required'}), 400
-    
+def preprocess_and_cluster(data, features):
+    """
+    Preprocess data and apply KMeans clustering.
+    """
+    # Convert numeric values to float
+    for row in data:
+        for key in row:
+            if isinstance(row[key], int):  # Check if value is an integer
+                row[key] = float(row[key])
+
+    schema = StructType([StructField(col, DoubleType(), True) for col in features])
+    df = spark.createDataFrame(data, schema)
+
+    # Assemble features into a single vector
+    assembler = VectorAssembler(inputCols=features, outputCol="features")
+    df_vectorized = assembler.transform(df)
+
+    # Scale the features
+    scaler = StandardScaler(inputCol="features", outputCol="scaled_features", withStd=True, withMean=True)
+    scaler_model = scaler.fit(df_vectorized)
+    df_scaled = scaler_model.transform(df_vectorized)
+
+    # Apply KMeans clustering
+    kmeans = KMeans(k=3, seed=42, featuresCol="scaled_features")
+    model = kmeans.fit(df_scaled)
+    clustered_df = model.transform(df_scaled)
+
+    # Collect results
+    result = clustered_df.select(*features, "prediction").collect()
+    return [{"features": row.asDict(), "cluster": row["prediction"]} for row in result]
+
+
+@app.route('/api/cluster_products_by_price_rating', methods=['POST'])
+def cluster_by_price_rating():
+    """
+    Cluster products based on discounted_price and rating.
+    """
+    data = request.get_json()
+    features = ["discounted_price", "rating"]
+
     try:
-        # Log the requested category and available categories
-        logger.info(f"Requested category: {main_category}")
-        categories = [row.category for row in df_model1.select('category').distinct().collect()]
-        logger.info(f"Available categories: {categories}")
-        
-        # Case-insensitive matching for main category
-        df = df_model1.filter(F.lower(F.col('category')).startswith(main_category.lower()))
-        
-        if df.count() == 0:
-            # Try partial matching if exact match fails
-            df = df_model1.filter(F.lower(F.col('category')).contains(main_category.lower()))
-        
-        if df.count() == 0:
-            logger.warning(f"No products found for category: {main_category}")
-            return jsonify({'error': f'No products found for category: {main_category}'}), 404
-        
-        # Get top-rated products
-        products = df.orderBy(F.col('rating').desc()).limit(5)
-        
-        result = [{
-            'name': row.product_name,
-            'price': float(row.discounted_price) if row.discounted_price is not None else 0.0,
-            'actual_price': float(row.actual_price) if row.actual_price is not None else 0.0,
-            'discount': float(row.discount_percentage) if row.discount_percentage is not None else 0.0,
-            'rating': float(row.rating) if row.rating is not None else 0.0,
-            'rating_count': int(row.rating_count) if row.rating_count is not None else 0,
-            'description': row.about_product if row.about_product is not None else '',
-            'image': row.img_link if row.img_link is not None else '',
-            'category': clean_category_name(row.category)
-        } for row in products.collect()]
-        
-        logger.info(f"Found {len(result)} products for category: {main_category}")
-        return jsonify(result)
-    
+        clustered_data = preprocess_and_cluster(data, features)
+
+        # Add human-readable descriptions
+        for item in clustered_data:
+            dp = item["features"]["discounted_price"]
+            rt = item["features"]["rating"]
+            if dp > 500 and rt < 3:
+                item["description"] = "High Price, Low Rating"
+            elif dp < 500 and rt > 4:
+                item["description"] = "Low Price, High Rating"
+            else:
+                item["description"] = "Mid Price, Mid Rating"
+
+        return jsonify(clustered_data)
     except Exception as e:
-        logger.error(f"Error processing category request: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({"error": str(e)}), 400
 
-@app.route('/api/similar_products', methods=['GET'])
-def get_similar_products():
-    product_name = request.args.get('name', '').strip().lower()
-    
-    if not product_name:
-        return jsonify({'error': 'Product name is required'}), 400
-    
+@app.route('/api/cluster_products_by_rating_count', methods=['POST'])
+def cluster_by_rating_count():
+    """
+    Cluster products based on rating and rating_count.
+    """
+    data = request.get_json()
+    features = ["rating", "rating_count"]
+
     try:
-        # Find similar products using case-insensitive partial matching
-        similar_products = df_model2.filter(F.lower(F.col('product_name')).contains(product_name)).limit(5)
-        
-        if similar_products.count() == 0:
-            logger.warning(f"No similar products found for: {product_name}")
-            return jsonify({'error': f'No similar products found for: {product_name}'}), 404
-        
-        result = [{
-            'name': row.product_name,
-            'price': float(row.discounted_price) if row.discounted_price is not None else 0.0,
-            'actual_price': float(row.actual_price) if row.actual_price is not None else 0.0,
-            'discount': float(row.discount_percentage) if row.discount_percentage is not None else 0.0,
-            'rating': float(row.rating) if row.rating is not None else 0.0,
-            'rating_count': int(row.rating_count) if row.rating_count is not None else 0,
-            'description': row.about_product if row.about_product is not None else '',
-            'image': row.img_link if row.img_link is not None else '',
-            'category': clean_category_name(row.category)
-        } for row in similar_products.collect()]
-        
-        logger.info(f"Found {len(result)} similar products for: {product_name}")
-        return jsonify(result)
-        
+        clustered_data = preprocess_and_cluster(data, features)
+
+        # Add human-readable descriptions
+        for item in clustered_data:
+            rt = item["features"]["rating"]
+            rc = item["features"]["rating_count"]
+            if rt > 4 and rc > 10000:
+                item["description"] = "High Rating, High Reviews"
+            elif rt < 3 and rc < 1000:
+                item["description"] = "Low Rating, Low Reviews"
+            else:
+                item["description"] = "Mid Rating, Mid Reviews"
+
+        return jsonify(clustered_data)
     except Exception as e:
-        logger.error(f"Error processing similar products request: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({"error": str(e)}), 400
 
-@app.route('/api/products_by_price', methods=['GET'])
-def get_products_by_price():
+@app.route('/api/cluster_products_by_discount', methods=['POST'])
+def cluster_by_discount():
+    """
+    Cluster products based on discount percentage.
+    """
+    data = request.get_json()
+    features = ["discount_percentage"]
+
     try:
-        target_price = float(request.args.get('target_price', 0))
-    except ValueError:
-        return jsonify({'error': 'Invalid price value'}), 400
-    
-    if target_price <= 0:
-        return jsonify({'error': 'Price must be greater than 0'}), 400
-    
-    try:
-        # Define price range (±10% of target price)
-        min_price = target_price * 0.9
-        max_price = target_price * 1.1
-        
-        # Filter products within price range
-        price_filtered = df_model3.filter(
-            (F.col('discounted_price') >= min_price) & 
-            (F.col('discounted_price') <= max_price)
-        ).orderBy(F.col('rating').desc()).limit(5)
-        
-        if price_filtered.count() == 0:
-            logger.warning(f"No products found in price range: ${min_price:.2f} - ${max_price:.2f}")
-            return jsonify({'error': f'No products found in price range: ${min_price:.2f} - ${max_price:.2f}'}), 404
-        
-        result = [{
-            'name': row.product_name,
-            'price': float(row.discounted_price) if row.discounted_price is not None else 0.0,
-            'actual_price': float(row.actual_price) if row.actual_price is not None else 0.0,
-            'discount': float(row.discount_percentage) if row.discount_percentage is not None else 0.0,
-            'rating': float(row.rating) if row.rating is not None else 0.0,
-            'rating_count': int(row.rating_count) if row.rating_count is not None else 0,
-            'description': row.about_product if row.about_product is not None else '',
-            'image': row.img_link if row.img_link is not None else '',
-            'category': clean_category_name(row.category)
-        } for row in price_filtered.collect()]
-        
-        logger.info(f"Found {len(result)} products in price range: ${min_price:.2f} - ${max_price:.2f}")
-        return jsonify(result)
-        
+        clustered_data = preprocess_and_cluster(data, features)
+
+        # Add human-readable descriptions
+        for item in clustered_data:
+            dp = item["features"]["discount_percentage"]
+            if dp > 50:
+                item["description"] = "High Discount"
+            elif 30 <= dp <= 50:
+                item["description"] = "Medium Discount"
+            else:
+                item["description"] = "Low Discount"
+
+        return jsonify(clustered_data)
     except Exception as e:
-        logger.error(f"Error processing price range request: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
-
-@app.route('/api/categories', methods=['GET'])
-def get_categories():
-    """Get all main categories and their subcategories"""
-    if df_model1 is None:
-        return jsonify({'error': 'Dataset not loaded'}), 500
-    
-    try:
-        # Get all distinct categories
-        raw_categories = [row.category for row in df_model1.select('category').distinct().collect()]
-        
-        # Initialize category tree
-        category_tree = {}
-        
-        # Process each category string
-        for cat in raw_categories:
-            # Split by pipe and clean whitespace
-            parts = [part.strip() for part in cat.split('|')]
-            
-            # Get main category and subcategory
-            if len(parts) >= 2:
-                main_cat = parts[0].replace(' ', '')  # Remove spaces
-                sub_cat = parts[1].replace(' ', '')   # Remove spaces
-                
-                # Initialize main category if not exists
-                if main_cat not in category_tree:
-                    category_tree[main_cat] = set()
-                
-                # Add subcategory if it's not empty
-                if sub_cat:
-                    # Clean up the subcategory
-                    sub_cat = sub_cat.replace('&', '&')  # Preserve & symbol
-                    sub_cat = ''.join(c if c.isalnum() or c in ['&', ','] else '' for c in sub_cat)
-                    category_tree[main_cat].add(sub_cat)
-        
-        # Convert sets to sorted lists and create final structure
-        result = {}
-        for main_cat, sub_cats in sorted(category_tree.items()):
-            # Clean up main category
-            clean_main_cat = main_cat.replace('&', '&')  # Preserve & symbol
-            clean_main_cat = ''.join(c if c.isalnum() or c == '&' else '' for c in clean_main_cat)
-            
-            # Add to result with cleaned and sorted subcategories
-            if sub_cats:  # Only add if there are subcategories
-                result[clean_main_cat] = sorted(list(sub_cats))
-        
-        return jsonify(result)
-        
-    except Exception as e:
-        logger.error(f"Error getting categories: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
-
-@app.before_request
-def initialize():
-    """Initialize the application by loading data"""
-    global df_model1, df_model2, df_model3, spark
-    if df_model1 is None or df_model2 is None or df_model3 is None:
-        if not load_dataframes():
-            logger.error("Failed to initialize application data")
+        return jsonify({"error": str(e)}), 400
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5001)
+    # Pastikan dataset paths tersedia
+    for path in DATASET_PATHS.values():
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Dataset not found: {path}")
+
+    app.run(debug=True)

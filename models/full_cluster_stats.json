@@ -1,0 +1,26 @@
+{
+    "1": {
+        "prediction": 1,
+        "avg(actual_price)": 2651.716212391361,
+        "avg(rating_count)": 11722.514167580408,
+        "avg(discount_percentage)": 66.19710340338474,
+        "avg(rating)": 51.73712273345829,
+        "avg(discounted_price)": 1020.4075885728179
+    },
+    "2": {
+        "prediction": 2,
+        "avg(actual_price)": 47438.83050847457,
+        "avg(rating_count)": 11640.016949152543,
+        "avg(discount_percentage)": 32.57627118644068,
+        "avg(rating)": 4.233898305084747,
+        "avg(discounted_price)": 30865.93220338983
+    },
+    "0": {
+        "prediction": 0,
+        "avg(actual_price)": 4568.538278560251,
+        "avg(rating_count)": 26493.413145539907,
+        "avg(discount_percentage)": 29.348982785602505,
+        "avg(rating)": 4.124413145539907,
+        "avg(discounted_price)": 3098.410907668231
+    }
+}
