@@ -6,7 +6,6 @@ from pyspark.ml.clustering import KMeans
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, DoubleType
 
-# Set JAVA_HOME sesuai path yang Anda tentukan
 os.environ['JAVA_HOME'] = '/Library/Java/JavaVirtualMachines/adoptopenjdk-11.jdk/Contents/Home'
 
 # Inisialisasi Spark session
@@ -75,7 +74,6 @@ def cluster_by_price_rating():
     try:
         clustered_data = preprocess_and_cluster(data, features)
 
-        # Add human-readable descriptions
         for item in clustered_data:
             dp = item["features"]["discounted_price"]
             rt = item["features"]["rating"]
@@ -101,7 +99,6 @@ def cluster_by_rating_count():
     try:
         clustered_data = preprocess_and_cluster(data, features)
 
-        # Add human-readable descriptions
         for item in clustered_data:
             rt = item["features"]["rating"]
             rc = item["features"]["rating_count"]
@@ -127,7 +124,6 @@ def cluster_by_discount():
     try:
         clustered_data = preprocess_and_cluster(data, features)
 
-        # Add human-readable descriptions
         for item in clustered_data:
             dp = item["features"]["discount_percentage"]
             if dp > 50:
@@ -142,7 +138,6 @@ def cluster_by_discount():
         return jsonify({"error": str(e)}), 400
 
 if __name__ == '__main__':
-    # Pastikan dataset paths tersedia
     for path in DATASET_PATHS.values():
         if not os.path.exists(path):
             raise FileNotFoundError(f"Dataset not found: {path}")
